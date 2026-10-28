@@ -149,3 +149,63 @@ describe('handouts', () => {
 		expect(Notice.last).toBe('Could not read that picture.');
 	});
 });
+
+describe('the key', () => {
+	it('sends no key until there is one, then sends it to open a table', async () => {
+		const { plugin } = await setup();
+		await plugin.share();
+		expect(requestUrl.sent[0]!.headers).toEqual({});
+		await plugin.stop();
+		plugin.settings.key = 'AbC123_xyz-987654';
+		requestUrl.sent.length = 0;
+		await plugin.share();
+		expect(requestUrl.sent[0]!.headers).toEqual({ 'x-key': 'AbC123_xyz-987654' });
+		expect(Modal.last!.contentEl.querySelector('.dm-screen-trial')).toBeNull();
+	});
+
+	it('shows a trial table\'s closing time and where to get a key, and says why when the hour is up', async () => {
+		const { plugin } = await setup();
+		requestUrl.reply = (r) =>
+			r.url.endsWith('/open')
+				? { status: 200, json: { room: 'k3m9pqrstu', secret: 'the-secret', trial: { ends: 3600e3 + 1000, buy: 'https://bananafestdestiny.itch.io/dm-screen' } } }
+				: { status: 200, json: { ok: true, watching: 0 } };
+		await plugin.share();
+		const box = Modal.last!.contentEl.querySelector('.dm-screen-trial')!;
+		expect(box.textContent).toContain('This is the free trial: the table closes at');
+		expect(box.querySelector('a')!.getAttribute('href')).toBe('https://bananafestdestiny.itch.io/dm-screen');
+		plugin.now = () => 3600e3 + 2000;
+		requestUrl.reply = () => ({ status: 404, json: { error: 'closed' } });
+		await plugin.send();
+		expect(plugin.sharing).toBe(false);
+		expect(plugin.settings.trial).toBeNull();
+		expect(Notice.last).toContain('The free hour is over');
+	});
+
+	it('shows no link to buy when the server gives none', async () => {
+		const { plugin } = await setup();
+		requestUrl.reply = (r) =>
+			r.url.endsWith('/open') ? { status: 200, json: { room: 'k3m9pqrstu', secret: 'the-secret', trial: { ends: 5000 } } } : { status: 200, json: { ok: true } };
+		await plugin.share();
+		expect(Modal.last!.contentEl.querySelector('.dm-screen-trial a')).toBeNull();
+	});
+
+	it('checks a key and says what the server found', async () => {
+		const { plugin } = await setup();
+		plugin.settings.key = 'AbC123_xyz-987654';
+		requestUrl.reply = () => ({ status: 200, json: { ok: true, sold: true } });
+		expect(await plugin.checkKey()).toContain('Good key');
+		expect(requestUrl.sent.at(-1)).toMatchObject({ url: `${SERVER}/api/table/key`, method: 'POST', body: JSON.stringify({ key: 'AbC123_xyz-987654' }) });
+		requestUrl.reply = () => ({ status: 200, json: { ok: false, sold: true } });
+		expect(await plugin.checkKey()).toContain('itch doesn\'t know that key');
+		requestUrl.reply = () => ({ status: 200, json: { ok: false, sold: false } });
+		expect(await plugin.checkKey()).toContain('isn\'t sold yet');
+		requestUrl.reply = () => { throw new Error('offline'); };
+		expect(await plugin.checkKey()).toContain('Could not check');
+	});
+
+	it('asks for a lost key by email and says the same whatever the address', async () => {
+		const { plugin } = await setup();
+		expect(await plugin.mailKey('gm@example.com')).toContain('If that address bought DM Screen');
+		expect(requestUrl.sent.at(-1)).toMatchObject({ url: `${SERVER}/api/table/key/mail`, body: JSON.stringify({ email: 'gm@example.com' }) });
+	});
+});

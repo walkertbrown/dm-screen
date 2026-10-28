@@ -1,7 +1,7 @@
 // A tiny stand-in for the `obsidian` module so main.ts can run under jsdom.
 // Only what DM Screen touches is here.
 
-type Opts = { cls?: string; text?: string; type?: string; placeholder?: string };
+type Opts = { cls?: string; text?: string; type?: string; placeholder?: string; href?: string };
 
 function make(this: HTMLElement | void, tag: string, o?: Opts): HTMLElement {
 	const el = document.createElement(tag);
@@ -9,6 +9,7 @@ function make(this: HTMLElement | void, tag: string, o?: Opts): HTMLElement {
 	if (o?.text) el.textContent = o.text;
 	if (o?.type) el.setAttribute('type', o.type);
 	if (o?.placeholder) el.setAttribute('placeholder', o.placeholder);
+	if (o?.href) el.setAttribute('href', o.href);
 	if (this && this !== (globalThis as unknown)) (this as HTMLElement).appendChild(el);
 	return el;
 }

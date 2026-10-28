@@ -13,12 +13,18 @@ interface Settings {
 	// the room being shared, kept so a restart of Obsidian keeps the same link
 	room: string;
 	secret: string;
+	// the key from itch (or the download page's address); kept here, in the vault's plugin folder
+	key: string;
+	// a free trial table's end and where to buy a key, from the server when it opened the room
+	trial: Trial | null;
 }
+
+export interface Trial { ends: number; buy?: string; why?: string }
 
 // the room keeps one picture of at most 1MB (the site's src/table/room.ts)
 const IMAGE_BYTES = 1024 * 1024;
 
-const DEFAULT_SETTINGS: Settings = { scene: '', playerHp: true, monsterHp: 'words', rolls: 5, room: '', secret: '' };
+const DEFAULT_SETTINGS: Settings = { scene: '', playerHp: true, monsterHp: 'words', rolls: 5, room: '', secret: '', key: '', trial: null };
 
 export default class DmScreenPlugin extends Plugin {
 	settings: Settings = DEFAULT_SETTINGS;
@@ -117,9 +123,9 @@ export default class DmScreenPlugin extends Plugin {
 	/** Opens a room if there isn't one, sends what's on the table, and shows the link to give the players. */
 	async share() {
 		if (!this.sharing) {
-			let got: { room?: string; secret?: string };
+			let got: { room?: string; secret?: string; trial?: Trial };
 			try {
-				const r = await requestUrl({ url: `${SERVER}/api/table/open`, method: 'POST', throw: false });
+				const r = await requestUrl({ url: `${SERVER}/api/table/open`, method: 'POST', headers: this.settings.key ? { 'x-key': this.settings.key } : {}, throw: false });
 				got = r.status === 200 ? (r.json as typeof got) : {};
 			} catch {
 				got = {};
@@ -130,6 +136,7 @@ export default class DmScreenPlugin extends Plugin {
 			}
 			this.settings.room = got.room;
 			this.settings.secret = got.secret;
+			this.settings.trial = got.trial ?? null;
 			await this.saveSettings();
 			// start with the clocks already written in the open note
 			const file = this.app.workspace.getActiveFile();
@@ -143,6 +150,7 @@ export default class DmScreenPlugin extends Plugin {
 		const { room, secret } = this.settings;
 		this.settings.room = '';
 		this.settings.secret = '';
+		this.settings.trial = null;
 		this.watching = 0;
 		this.handout = null;
 		await this.saveSettings();
@@ -235,17 +243,37 @@ export default class DmScreenPlugin extends Plugin {
 			throw: false,
 		}).catch(() => null);
 		if (r && (r.status === 404 || r.status === 403) && this.settings.room === room) {
-			// the room closed itself after 12 quiet hours
+			// the room closed itself after 12 quiet hours, or a free trial's hour was up
+			const trial = this.settings.trial;
 			this.settings.room = '';
 			this.settings.secret = '';
+			this.settings.trial = null;
 			this.handout = null;
 			await this.saveSettings();
-			new Notice('The shared table had closed. Share it again for a new link.');
+			new Notice(trial && this.now() >= trial.ends
+				? 'The free hour is over and the shared table has closed. A key in DM Screen\'s settings keeps a table open all evening.'
+				: 'The shared table had closed. Share it again for a new link.');
 		} else if (r?.status === 200) {
 			this.watching = (r.json as { watching?: number }).watching ?? 0;
 		}
 		this.showStatus();
 		for (const f of this.onSent) f();
+	}
+
+	/** Asks the server whether the key in settings is a good one; the answer, in words. */
+	async checkKey(): Promise<string> {
+		const r = await requestUrl({ url: `${SERVER}/api/table/key`, method: 'POST', contentType: 'application/json', body: JSON.stringify({ key: this.settings.key }), throw: false }).catch(() => null);
+		if (r?.status !== 200) return 'Could not check the key. Check the connection and try again.';
+		const got = r.json as { ok?: boolean; sold?: boolean };
+		if (got.ok) return 'Good key. Your shared tables stay open all evening.';
+		if (got.sold === false) return 'DM Screen isn\'t sold yet, so every shared table stays open all evening.';
+		return 'itch doesn\'t know that key for DM Screen. Paste the address of your download page, or the key at the end of it.';
+	}
+
+	/** Mails the key again to the address that bought DM Screen. The server says the same whether or not it did. */
+	async mailKey(email: string): Promise<string> {
+		const r = await requestUrl({ url: `${SERVER}/api/table/key/mail`, method: 'POST', contentType: 'application/json', body: JSON.stringify({ email }), throw: false }).catch(() => null);
+		return r?.status === 200 ? 'If that address bought DM Screen, its key is on the way. Look in your mail in a minute.' : 'Could not ask for the key. Check the connection and try again.';
 	}
 
 	whenSent(f: () => void) {
@@ -294,6 +322,13 @@ export class ShareModal extends Modal {
 			void p.stop();
 			this.close();
 		};
+		const trial = p.settings.trial;
+		if (trial) {
+			const box = el.createDiv({ cls: 'dm-screen-trial' });
+			const at = new Date(trial.ends).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+			box.createSpan({ text: `${trial.why ? trial.why + ' ' : ''}This is the free trial: the table closes at ${at}. With a key in DM Screen's settings, it stays open all evening.` });
+			if (trial.buy) box.createEl('a', { text: 'Get a key', href: trial.buy });
+		}
 		const watching = el.createDiv({ cls: 'dm-screen-watching' });
 		const showing = el.createDiv({ cls: 'dm-screen-handout' });
 		const show = () => {
@@ -370,7 +405,32 @@ class DmScreenSettingTab extends PluginSettingTab {
 		super(app, plugin);
 	}
 	getSettingDefinitions(): SettingDefinitionItem[] {
+		const p = this.plugin;
 		return [
+			{
+				name: 'Key',
+				desc: 'The address of your itch download page, or the key at the end of it. It is kept in this vault\'s plugin folder, so anyone you share the whole vault with gets it too.',
+				render: (setting) => {
+					const said = setting.descEl.createDiv({ cls: 'dm-screen-said' });
+					setting
+						.addText((t) => t.setPlaceholder('Download page address or key').setValue(p.settings.key).onChange(async (v) => {
+							p.settings.key = v.trim();
+							await p.saveSettings();
+						}))
+						.addButton((b) => b.setButtonText('Check').onClick(async () => said.setText(await p.checkKey())));
+				},
+			},
+			{
+				name: 'Lost your key?',
+				desc: 'Type the email you bought DM Screen with, and its key is mailed there.',
+				render: (setting) => {
+					let email = '';
+					const said = setting.descEl.createDiv({ cls: 'dm-screen-said' });
+					setting
+						.addText((t) => t.setPlaceholder('you@example.com').onChange((v) => (email = v.trim())))
+						.addButton((b) => b.setButtonText('Mail my key').onClick(async () => said.setText(await p.mailKey(email))));
+				},
+			},
 			{
 				name: 'Players\' hit points',
 				desc: 'Show each player character\'s hit points as numbers.',
@@ -389,8 +449,7 @@ class DmScreenSettingTab extends PluginSettingTab {
 		];
 	}
 	getControlValue(key: string): unknown {
-		const v = this.plugin.settings[key as keyof Settings];
-		return key === 'rolls' ? String(v) : v;
+		return key === 'rolls' ? String(this.plugin.settings.rolls) : this.plugin.settings[key as keyof Settings];
 	}
 	async setControlValue(key: string, value: unknown): Promise<void> {
 		(this.plugin.settings as unknown as Record<string, unknown>)[key] = key === 'rolls' ? Number(value) : value;

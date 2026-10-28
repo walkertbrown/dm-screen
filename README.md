@@ -37,6 +37,16 @@ Only what you choose:
 
 Nothing else from your vault is sent: no note text but the handouts you show, no monster stats, no file names but a handout's.
 
+## Payment
+
+**Payment is required for full access.** DM Screen costs $12 once, on itch.io. Without a key, a shared table is a free trial: it closes an hour after it opens, enough to try it with your group. With a key, it stays open all evening (until 12 hours pass with no changes).
+
+After you buy, itch takes you to your download page. Copy that page's address (or the key at the end of it) into **Settings → DM Screen → Key** and click **Check**. Lost it? Type the email you bought with under **Lost your key?** and the key is mailed there. itch also emails your download page with the receipt.
+
+The key is kept in your vault's plugin folder (`.obsidian/plugins/dm-screen/data.json`), so you paste it once per vault. If you share your whole vault folder with someone, the key goes with it.
+
+Until DM Screen is on sale, every table stays open all evening and nothing asks for money.
+
 ## Network use
 
 DM Screen uses the network, only while you are sharing:
@@ -44,13 +54,17 @@ DM Screen uses the network, only while you are sharing:
 - When you start sharing, it asks `https://bulkhead.bananafest-destiny.com/api/table/open` for a room. That server is run by the maker of this plugin.
 - While you share, each change sends the table as described above to that room. The players' phones read it from there.
 - A handout picture goes to the same room, shrunk first. Hiding it deletes it.
-- When you stop, or after 12 hours with no changes, the room and everything in it is deleted.
+- When you stop, or after 12 hours with no changes (an hour from opening, on the free trial), the room and everything in it is deleted.
+- With a key in settings, the key goes with each new table, and **Check** sends it on its own. The server asks itch once whether it is a DM Screen key and then keeps only a hash of it, and a count of how many tables it opened that day.
+- **Lost your key?** sends the address you type. The server asks itch for that address's DM Screen key and mails it there. It keeps a hash of the address for an hour, so it mails once an hour at most, and never logs it.
 
 The server keeps only the last table sent, the handout picture showing, and a hash of the room's key. It keeps no accounts, no logs of who opened a room, and no IP addresses. Without a share running, DM Screen sends nothing at all.
 
 ## Install
 
-By hand: copy `main.js`, `manifest.json` and `styles.css` into `<your vault>/.obsidian/plugins/dm-screen/`, then enable it under Community plugins.
+From itch: [buy DM Screen](https://bananafestdestiny.itch.io/dm-screen) and download `dm-screen.zip`. Unzip it into `<your vault>/.obsidian/plugins/`, so the files land in `.obsidian/plugins/dm-screen/`, then turn it on under **Settings → Community plugins** and paste your key (see Payment).
+
+By hand: copy `main.js`, `manifest.json` and `styles.css` from a release into `<your vault>/.obsidian/plugins/dm-screen/`, then turn it on under Community plugins.
 
 ## Build
 

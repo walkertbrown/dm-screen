@@ -15,3 +15,15 @@
 	margin-top: 6px;
 	color: var(--text-muted);
 }
+
+.dm-screen-trial {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	padding: 6px 10px;
+	margin-bottom: 8px;
+	text-align: start;
+}
+.dm-screen-trial a { margin-inline-start: 6px; }
+.dm-screen-said { margin-top: 4px; color: var(--text-normal); }
