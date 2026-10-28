@@ -1,0 +1,8 @@
+.dm-screen-hidden { display: none; }
+.dm-screen-share { text-align: center; }
+.dm-screen-qr svg { width: min(240px, 70vw); height: auto; display: block; margin: 0 auto 10px; border-radius: 6px; }
+.dm-screen-link { display: block; font-family: var(--font-monospace); font-size: var(--font-ui-small); word-break: break-all; margin-bottom: 12px; }
+.dm-screen-row { display: flex; gap: 8px; justify-content: center; margin-bottom: 6px; }
+.dm-screen-watching { color: var(--text-muted); font-size: var(--font-ui-small); margin-bottom: 8px; }
+.dm-screen-share .setting-item { text-align: start; }
+.dm-screen-note { color: var(--text-muted); font-size: var(--font-ui-small); text-align: start; }

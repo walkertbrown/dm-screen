@@ -1,0 +1,30 @@
+{
+	"name": "dm-screen",
+	"version": "0.1.0",
+	"description": "DM Screen: the table on your players' phones, live from Obsidian.",
+	"main": "main.js",
+	"type": "module",
+	"scripts": {
+		"dev": "node esbuild.config.mjs",
+		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+		"test": "vitest run",
+		"lint": "eslint src",
+		"demo": "node esbuild.demo.mjs"
+	},
+	"license": "MIT",
+	"devDependencies": {
+		"@eslint/js": "^10.0.1",
+		"@types/node": "^22.15.17",
+		"esbuild": "^0.28.2",
+		"eslint": "^10.13.0",
+		"eslint-plugin-obsidianmd": "^0.4.2",
+		"jsdom": "^30.1.3",
+		"obsidian": "1.14.4",
+		"typescript": "^5.8.3",
+		"typescript-eslint": "^8.72.1",
+		"vitest": "^5.0.0"
+	},
+	"dependencies": {
+		"qrcode-generator": "^2.0.4"
+	}
+}
