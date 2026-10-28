@@ -45,10 +45,11 @@ export function installDomHelpers() {
 }
 
 export class TFile {
-	constructor(public path: string, public basename = path.split('/').pop()!.replace(/\.md$/, '')) {}
+	constructor(public path: string, public basename = path.split('/').pop()!.replace(/\.[^.]+$/, '')) {}
+	get extension() { return this.path.includes('.') ? this.path.split('.').pop()! : ''; }
 }
 
-export interface FakeNote { path: string; content: string; frontmatter?: Record<string, unknown> }
+export interface FakeNote { path: string; content: string; frontmatter?: Record<string, unknown>; bytes?: ArrayBuffer }
 
 export class App {
 	notes = new Map<string, FakeNote>();
@@ -73,6 +74,7 @@ export class App {
 	vault = {
 		getAbstractFileByPath: (path: string) => (this.find(path) ? new TFile(this.find(path)!.path) : this.folders.has(path) ? { path } : null),
 		cachedRead: async (f: TFile) => this.find(f.path)!.content,
+		readBinary: async (f: TFile) => this.find(f.path)!.bytes ?? new ArrayBuffer(0),
 		getMarkdownFiles: () => [...this.notes.values()].map((n) => new TFile(n.path)),
 		create: async (path: string, content: string) => {
 			this.notes.set(path, { path, content });
@@ -169,7 +171,7 @@ export function setIcon(el: HTMLElement, name: string) {
 }
 
 /** Requests the plugin makes, answered by whatever a test puts in `requestUrl.reply`. */
-export interface Req { url: string; method?: string; headers?: Record<string, string>; body?: string; contentType?: string; throw?: boolean }
+export interface Req { url: string; method?: string; headers?: Record<string, string>; body?: string | ArrayBuffer; contentType?: string; throw?: boolean }
 type Reply = (r: Req) => { status: number; json?: unknown } | Promise<{ status: number; json?: unknown }>;
 export const requestUrl = Object.assign(
 	async (r: Req) => {

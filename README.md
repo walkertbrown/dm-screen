@@ -16,6 +16,17 @@ From then on, every change goes to their phones a moment after you make it: a ne
 
 **Stop sharing the table** closes it. The players' page says the table has closed, and everything sent is deleted.
 
+## Handouts
+
+Show the players a letter, a riddle, a map or a portrait:
+
+- **Show to players** in a picture's or a note's menu (or the **Show this note to players** command). A picture shows as it is. A note shows its words and the first picture in it. Its properties, `%% comments %%` and code blocks stay behind, so GM notes in the same note are safe.
+- **Show to players** in the editor's menu, with text selected (or **Show the selected text to players**), shows just those words.
+
+The handout sits at the top of the players' page until you show another or **Hide the handout from players**. A tap opens the picture full size. Pictures are shrunk to at most 1600 pixels a side, as JPEG, before they leave your vault.
+
+Showing a handout starts sharing if it hadn't started.
+
 ## What the players see
 
 Only what you choose:
@@ -24,7 +35,7 @@ Only what you choose:
 - **Monsters' hit points**: words by default (*hurt*, *bloodied* at half or less, *down*), or numbers, or nothing.
 - **Recent rolls**: none, 3, 5 or 10.
 
-Nothing else from your vault is sent: no note text, no monster stats, no file names.
+Nothing else from your vault is sent: no note text but the handouts you show, no monster stats, no file names but a handout's.
 
 ## Network use
 
@@ -32,9 +43,10 @@ DM Screen uses the network, only while you are sharing:
 
 - When you start sharing, it asks `https://bulkhead.bananafest-destiny.com/api/table/open` for a room. That server is run by the maker of this plugin.
 - While you share, each change sends the table as described above to that room. The players' phones read it from there.
+- A handout picture goes to the same room, shrunk first. Hiding it deletes it.
 - When you stop, or after 12 hours with no changes, the room and everything in it is deleted.
 
-The server keeps only the last table sent and a hash of the room's key. It keeps no accounts, no logs of who opened a room, and no IP addresses. Without a share running, DM Screen sends nothing at all.
+The server keeps only the last table sent, the handout picture showing, and a hash of the room's key. It keeps no accounts, no logs of who opened a room, and no IP addresses. Without a share running, DM Screen sends nothing at all.
 
 ## Install
 

@@ -1,6 +1,6 @@
-import { App, EventRef, Modal, Notice, Plugin, PluginSettingTab, Setting, SettingDefinitionItem, requestUrl } from 'obsidian';
+import { App, Editor, EventRef, Menu, Modal, Notice, Plugin, PluginSettingTab, Setting, SettingDefinitionItem, TAbstractFile, TFile, requestUrl } from 'obsidian';
 import qrcode from 'qrcode-generator';
-import { buildTable, clocksInNote, setClock, type Clock, type ClockEvent, type FightEvent, type MonsterHp, type Roll, type RollEvent, type Table } from './table';
+import { buildTable, clocksInNote, IMAGE_EXTENSIONS, noteAsHandout, setClock, type Clock, type ClockEvent, type FightEvent, type Handout, type MonsterHp, type Roll, type RollEvent, type Table } from './table';
 
 // The relay the players' phones read from. Nothing is sent there until the GM starts sharing (see the README).
 export const SERVER = 'https://bulkhead.bananafest-destiny.com';
@@ -15,6 +15,9 @@ interface Settings {
 	secret: string;
 }
 
+// the room keeps one picture of at most 1MB (the site's src/table/room.ts)
+const IMAGE_BYTES = 1024 * 1024;
+
 const DEFAULT_SETTINGS: Settings = { scene: '', playerHp: true, monsterHp: 'words', rolls: 5, room: '', secret: '' };
 
 export default class DmScreenPlugin extends Plugin {
@@ -22,7 +25,9 @@ export default class DmScreenPlugin extends Plugin {
 	fight: FightEvent | null = null;
 	clocks: Clock[] = [];
 	rolls: Roll[] = [];
+	handout: Handout | null = null;
 	watching = 0;
+	shrink: (bytes: ArrayBuffer) => Promise<ArrayBuffer | null> = shrink;
 	now: () => number = Date.now;
 	private status: HTMLElement | null = null;
 	private timer = 0;
@@ -50,6 +55,40 @@ export default class DmScreenPlugin extends Plugin {
 				return true;
 			},
 		});
+		this.addCommand({
+			id: 'show-note',
+			name: 'Show this note to players',
+			checkCallback: (checking) => {
+				const file = this.app.workspace.getActiveFile();
+				if (!file || !canShow(file)) return false;
+				if (!checking) void this.showFile(file);
+				return true;
+			},
+		});
+		this.addCommand({
+			id: 'show-selection',
+			name: 'Show the selected text to players',
+			editorCheckCallback: (checking, editor: Editor) => {
+				if (!editor.getSelection().trim()) return false;
+				if (!checking) void this.showText('', editor.getSelection());
+				return true;
+			},
+		});
+		this.addCommand({
+			id: 'hide-handout',
+			name: 'Hide the handout from players',
+			checkCallback: (checking) => {
+				if (!this.handout) return false;
+				if (!checking) void this.hideHandout();
+				return true;
+			},
+		});
+		this.registerEvent(this.app.workspace.on('file-menu', (menu: Menu, file: TAbstractFile) => {
+			if (file instanceof TFile && canShow(file)) menu.addItem((i) => i.setTitle('Show to players').setIcon('cast').onClick(() => void this.showFile(file)));
+		}));
+		this.registerEvent(this.app.workspace.on('editor-menu', (menu: Menu, editor: Editor) => {
+			if (editor.getSelection().trim()) menu.addItem((i) => i.setTitle('Show to players').setIcon('cast').onClick(() => void this.showText('', editor.getSelection())));
+		}));
 		// the other plugins' own events; DM Screen only listens, and only sends while sharing
 		const on = this.app.workspace as unknown as { on<E>(name: string, cb: (e: E) => void): EventRef };
 		this.registerEvent(on.on<FightEvent>('quick-initiative:change', (e) => {
@@ -72,7 +111,7 @@ export default class DmScreenPlugin extends Plugin {
 
 	table(): Table {
 		const s = this.settings;
-		return buildTable(this.fight, this.clocks, this.rolls, { scene: s.scene, playerHp: s.playerHp, monsterHp: s.monsterHp, rolls: s.rolls });
+		return buildTable(this.fight, this.clocks, this.rolls, { scene: s.scene, playerHp: s.playerHp, monsterHp: s.monsterHp, rolls: s.rolls }, this.handout);
 	}
 
 	/** Opens a room if there isn't one, sends what's on the table, and shows the link to give the players. */
@@ -105,10 +144,72 @@ export default class DmScreenPlugin extends Plugin {
 		this.settings.room = '';
 		this.settings.secret = '';
 		this.watching = 0;
+		this.handout = null;
 		await this.saveSettings();
 		this.showStatus();
 		if (room) await requestUrl({ url: `${SERVER}/api/table/${room}`, method: 'DELETE', headers: { authorization: `Bearer ${secret}` }, throw: false }).catch(() => null);
 		new Notice('Stopped sharing. The players\' page now says the table has closed.');
+	}
+
+	/** A letter or a riddle: the words go to the top of the players' page until the GM hides them. */
+	async showText(title: string, text: string) {
+		if (!(await this.ready())) return;
+		await this.dropImage(this.handout);
+		this.handout = { text: text.trim().slice(0, 4000) };
+		if (title) this.handout.title = title;
+		await this.send();
+		new Notice('The players can see it now.');
+	}
+
+	/** A picture (a map, a portrait), made small enough for a phone before it leaves, with any words to go under it. */
+	async showImage(bytes: ArrayBuffer, title: string, text = '') {
+		if (!(await this.ready())) return;
+		const small = await this.shrink(bytes).catch(() => null);
+		if (!small) {
+			new Notice('Could not read that picture.');
+			return;
+		}
+		const { room, secret } = this.settings;
+		const r = await requestUrl({ url: `${SERVER}/api/table/${room}/image`, method: 'PUT', headers: { authorization: `Bearer ${secret}` }, contentType: 'image/jpeg', body: small, throw: false }).catch(() => null);
+		const v = r?.status === 200 ? (r.json as { v?: string }).v : undefined;
+		if (!v) {
+			new Notice('Could not send the picture. Check the connection and try again.');
+			return;
+		}
+		this.handout = { image: v };
+		if (title) this.handout.title = title;
+		if (text.trim()) this.handout.text = text.trim().slice(0, 4000);
+		await this.send();
+		new Notice('The players can see it now.');
+	}
+
+	/** A picture file, or a note: its words, and the first picture embedded in it. */
+	async showFile(file: TFile) {
+		const ext = file.extension.toLowerCase();
+		if (IMAGE_EXTENSIONS.includes(ext)) return this.showImage(await this.app.vault.readBinary(file), file.basename);
+		const { text, image } = noteAsHandout(await this.app.vault.cachedRead(file));
+		const pic = image ? this.app.metadataCache.getFirstLinkpathDest(image, file.path) : null;
+		if (pic && IMAGE_EXTENSIONS.includes(pic.extension.toLowerCase())) return this.showImage(await this.app.vault.readBinary(pic), file.basename, text);
+		return this.showText(file.basename, text);
+	}
+
+	async hideHandout() {
+		const was = this.handout;
+		this.handout = null;
+		await this.send();
+		await this.dropImage(was);
+	}
+
+	/** Pictures don't stay in the room after they're taken down. */
+	private async dropImage(was: Handout | null) {
+		const { room, secret } = this.settings;
+		if (room && was?.image) await requestUrl({ url: `${SERVER}/api/table/${room}/image`, method: 'DELETE', headers: { authorization: `Bearer ${secret}` }, throw: false }).catch(() => null);
+	}
+
+	/** Showing something starts sharing if it hadn't started. */
+	private async ready() {
+		if (!this.sharing) await this.share();
+		return this.sharing;
 	}
 
 	link() {
@@ -137,6 +238,7 @@ export default class DmScreenPlugin extends Plugin {
 			// the room closed itself after 12 quiet hours
 			this.settings.room = '';
 			this.settings.secret = '';
+			this.handout = null;
 			await this.saveSettings();
 			new Notice('The shared table had closed. Share it again for a new link.');
 		} else if (r?.status === 200) {
@@ -193,7 +295,16 @@ export class ShareModal extends Modal {
 			this.close();
 		};
 		const watching = el.createDiv({ cls: 'dm-screen-watching' });
-		const show = () => watching.setText(p.watching === 1 ? '1 phone watching' : `${p.watching} phones watching`);
+		const showing = el.createDiv({ cls: 'dm-screen-handout' });
+		const show = () => {
+			watching.setText(p.watching === 1 ? '1 phone watching' : `${p.watching} phones watching`);
+			showing.empty();
+			showing.toggleClass('dm-screen-hidden', !p.handout);
+			if (!p.handout) return;
+			showing.createSpan({ text: `Showing: ${p.handout.title || (p.handout.image ? 'a picture' : 'your text')}` });
+			const hide = showing.createEl('button', { text: 'Hide' });
+			hide.onclick = () => void p.hideHandout();
+		};
 		show();
 		this.off = p.whenSent(show);
 		new Setting(el)
@@ -208,7 +319,7 @@ export class ShareModal extends Modal {
 			);
 		el.createEl('p', {
 			cls: 'dm-screen-note',
-			text: 'Players open the link or scan the code; nothing to install. They see the turn order, clocks and recent rolls, and nothing else from your vault. Hit points follow your settings.',
+			text: 'Players open the link or scan the code; nothing to install. They see the turn order, clocks, recent rolls and any handout you show them, and nothing else from your vault. Hit points follow your settings.',
 		});
 	}
 
@@ -216,6 +327,30 @@ export class ShareModal extends Modal {
 		this.off?.();
 		this.contentEl.empty();
 	}
+}
+
+function canShow(file: TFile) {
+	return file.extension === 'md' || IMAGE_EXTENSIONS.includes(file.extension.toLowerCase());
+}
+
+/** A picture made small enough for a phone and for the room: at most 1600px a side, as JPEG, under 1MB. */
+export async function shrink(bytes: ArrayBuffer): Promise<ArrayBuffer | null> {
+	const bitmap = await createImageBitmap(new Blob([bytes]));
+	for (const [side, quality] of [[1600, 0.85], [1200, 0.75], [900, 0.6]] as const) {
+		const k = Math.min(1, side / Math.max(bitmap.width, bitmap.height));
+		const canvas = createEl('canvas');
+		canvas.width = Math.max(1, Math.round(bitmap.width * k));
+		canvas.height = Math.max(1, Math.round(bitmap.height * k));
+		const g = canvas.getContext('2d');
+		if (!g) return null;
+		// a see-through PNG would go black as JPEG
+		g.fillStyle = '#fff';
+		g.fillRect(0, 0, canvas.width, canvas.height);
+		g.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+		const blob = await new Promise<Blob | null>((done) => canvas.toBlob(done, 'image/jpeg', quality));
+		if (blob && blob.size <= IMAGE_BYTES) return blob.arrayBuffer();
+	}
+	return null;
 }
 
 function drawQr(el: HTMLElement, text: string) {

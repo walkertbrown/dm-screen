@@ -1,13 +1,15 @@
 // Browser demo: runs the real DM Screen, Quick Initiative, Dice Tray and Tabletop Clocks plugins against the test shim,
 // over a sample note, and shares the table through the real relay, so the phone beside it (or the visitor's own phone,
 // by the QR code) is the actual players' page.
-import { App, installDomHelpers, Modal, requestUrl } from '../test/obsidian-shim';
+import { App, installDomHelpers, Modal, requestUrl, TFile } from '../test/obsidian-shim';
 import DmScreenPlugin from '../src/main';
 import QuickInitiativePlugin from '../../quick-initiative/src/main';
 import DiceTrayPlugin from '../../dice-tray/src/main';
 import TabletopClocksPlugin from '../../tabletop-clocks/src/main';
 
 installDomHelpers();
+// Obsidian's own global, which DM Screen uses to shrink pictures
+(globalThis as unknown as { createEl: (tag: string) => HTMLElement }).createEl = (tag) => document.createElement(tag);
 
 // Lucide icons (ISC license), the set Obsidian itself uses.
 const ICONS: Record<string, string> = {
@@ -44,12 +46,66 @@ Borin player init 9 hp 44 ac 18
 [[Bugbear]]
 \`\`\``;
 
+const LETTER = `---
+gm: the boy is in the cellar
+---
+Miller,
+
+The wheel turns at midnight, or the boy stays with us.
+Come alone. Bring the ledger.
+
+%% The writer is the miller's own brother. %%
+R.`;
+
+/** The map handout, drawn here so the demo needs no picture file: a big PNG, so DM Screen has something to shrink. */
+async function drawMap(): Promise<ArrayBuffer> {
+	const c = document.createElement('canvas');
+	c.width = 2000;
+	c.height = 1400;
+	const g = c.getContext('2d')!;
+	g.fillStyle = '#e9dcc0';
+	g.fillRect(0, 0, 2000, 1400);
+	g.strokeStyle = '#5b86a6';
+	g.lineWidth = 70;
+	g.beginPath();
+	g.moveTo(0, 300);
+	g.bezierCurveTo(600, 200, 900, 900, 2000, 800);
+	g.stroke();
+	g.fillStyle = '#7a5a3a';
+	g.fillRect(820, 560, 260, 200);
+	g.fillStyle = '#4c6b3c';
+	for (const [x, y] of [[300, 900], [420, 1050], [1500, 1150], [1650, 1000], [1300, 300], [1450, 200]]) {
+		g.beginPath();
+		g.arc(x, y, 70, 0, Math.PI * 2);
+		g.fill();
+	}
+	g.strokeStyle = '#7a5a3a';
+	g.lineWidth = 16;
+	g.setLineDash([40, 30]);
+	g.beginPath();
+	g.moveTo(950, 760);
+	g.lineTo(950, 1400);
+	g.stroke();
+	g.fillStyle = '#2b2118';
+	g.font = 'bold 110px Georgia, serif';
+	g.fillText('The mill', 760, 520);
+	g.font = 'italic 80px Georgia, serif';
+	g.fillText('the wheel', 1110, 700);
+	g.fillText('road to the village', 990, 1300);
+	g.fillStyle = '#a3312a';
+	g.font = 'bold 140px Georgia, serif';
+	g.fillText('×', 1250, 430);
+	const blob = await new Promise<Blob>((done) => c.toBlob((b) => done(b!), 'image/png'));
+	return blob.arrayBuffer();
+}
+
 type Ctx = { sourcePath: string; addChild: () => void; getSectionInfo: () => { text: string; lineStart: number; lineEnd: number } };
 type Proc = (src: string, el: HTMLElement, c: Ctx) => void;
 
 // the shim's requestUrl answers tests; here it goes to the real relay, which is this same site
 requestUrl.reply = async (r) => {
-	const res = await fetch(r.url.replace(/^https:\/\/bulkhead\.bananafest-destiny\.com/, location.origin), { method: r.method, headers: r.headers, body: r.body });
+	const headers = { ...r.headers, ...(r.contentType ? { 'content-type': r.contentType } : {}) };
+	const res = await fetch(r.url.replace(/^https:\/\/bulkhead\.bananafest-destiny\.com/, location.origin), { method: r.method, headers, body: r.body });
 	return { status: res.status, json: await res.json().catch(() => null) };
 };
 
@@ -59,6 +115,8 @@ async function main() {
 	app.notes.set('Goblin', { path: 'Goblin.md', content: '', frontmatter: { statblock: true, hp: 7, ac: 15, hit_dice: '2d6', stats: [8, 14, 10, 10, 8, 8] } });
 	app.notes.set('Bugbear', { path: 'Bugbear.md', content: '', frontmatter: { statblock: true, hp: 27, ac: 16, hit_dice: '5d8 + 5', stats: [15, 14, 13, 8, 11, 9] } });
 	app.active = 'Mill.md';
+	app.notes.set('Pinned to the mill door.md', { path: 'Pinned to the mill door.md', content: LETTER });
+	app.notes.set('Mill map.png', { path: 'Mill map.png', content: '', bytes: await drawMap() });
 
 	const screen = new DmScreenPlugin(app as never, { id: 'dm-screen' } as never);
 	await screen.onload();
@@ -106,7 +164,7 @@ async function main() {
 	const shareBox = document.querySelector<HTMLElement>('#share')!;
 	const phone = document.querySelector<HTMLIFrameElement>('#phone')!;
 	const start = document.querySelector<HTMLButtonElement>('#start')!;
-	start.onclick = async () => {
+	const startSharing = async () => {
 		start.disabled = true;
 		start.textContent = 'Opening a table…';
 		await screen.share();
@@ -132,6 +190,15 @@ async function main() {
 			}, 300);
 		});
 	};
+	start.onclick = startSharing;
+	// a handout starts sharing too; here that has to go through the button, which puts the window and the phone in place
+	const show = async (path: string) => {
+		if (!screen.sharing) await startSharing();
+		if (screen.sharing) await screen.showFile(new TFile(path) as never);
+	};
+	document.querySelector('#show-letter')!.addEventListener('click', () => void show('Pinned to the mill door.md'));
+	document.querySelector('#show-map')!.addEventListener('click', () => void show('Mill map.png'));
+	document.querySelector('#hide-handout')!.addEventListener('click', () => void screen.hideHandout());
 	// a visitor who leaves closes their table, rather than leaving it for 12 hours
 	addEventListener('pagehide', () => {
 		if (screen.sharing) void fetch(`/api/table/${screen.settings.room}`, { method: 'DELETE', headers: { authorization: `Bearer ${screen.settings.secret}` }, keepalive: true });

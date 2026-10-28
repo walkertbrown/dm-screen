@@ -15,7 +15,8 @@ export interface RollEvent { sourcePath: string; text: string }
 export interface Fighter { name: string; hp?: string; player?: boolean; down?: boolean; conditions?: string[] }
 export interface Clock { name: string; filled: number; size: number }
 export interface Roll { text: string; at: number }
-export interface Table { scene?: string; round?: number; turn?: number; order: Fighter[]; clocks: Clock[]; rolls: Roll[] }
+export interface Handout { title?: string; text?: string; image?: string }
+export interface Table { scene?: string; round?: number; turn?: number; order: Fighter[]; clocks: Clock[]; rolls: Roll[]; handout?: Handout }
 
 export type MonsterHp = 'words' | 'numbers' | 'hidden';
 export interface Show { scene: string; playerHp: boolean; monsterHp: MonsterHp; rolls: number }
@@ -35,9 +36,10 @@ function hpFor(c: FightEvent['combatants'][number], show: Show): string {
 }
 
 /** Everything the GM is sharing right now. A fight that has ended (round 0) shows no turn order. */
-export function buildTable(fight: FightEvent | null, clocks: Clock[], rolls: Roll[], show: Show): Table {
+export function buildTable(fight: FightEvent | null, clocks: Clock[], rolls: Roll[], show: Show, handout: Handout | null = null): Table {
 	const t: Table = { order: [], clocks: [...clocks], rolls: rolls.slice(0, show.rolls) };
 	if (show.scene.trim()) t.scene = show.scene.trim();
+	if (handout) t.handout = { ...handout };
 	if (fight && fight.round > 0) {
 		t.round = fight.round;
 		t.order = fight.combatants.map((c) => {
@@ -83,4 +85,30 @@ export function clocksInNote(text: string): Clock[] {
 		}
 	}
 	return out;
+}
+
+export const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'avif'];
+const EMBED = /!\[\[([^\]|#]+)[^\]]*\]\]|!\[[^\]]*\]\((?:<([^>]+)>|([^)\s]+))[^)]*\)/g;
+
+/** A note as players would read it on a handout: no frontmatter, comments or code, links as their words, and the first
+ *  picture embedded in it (a vault path, not a web address) given back on its own to send as the handout's picture. */
+export function noteAsHandout(md: string): { text: string; image: string | null } {
+	let image: string | null = null;
+	const text = md
+		.replace(/^---\n[\s\S]*?\n---(\n|$)/, '')
+		.replace(/%%[\s\S]*?%%/g, '')
+		.replace(/^(```|~~~)[\s\S]*?^\1[^\n]*$/gm, '')
+		.replace(EMBED, (_, wiki?: string, angled?: string, bare?: string) => {
+			const path = (wiki ?? decodeURIComponent(angled ?? bare ?? '')).trim();
+			if (!image && !/^[a-z]+:/i.test(path) && IMAGE_EXTENSIONS.includes(path.split('.').pop()!.toLowerCase())) image = path;
+			return '';
+		})
+		.replace(LINK, (_, l: string, a?: string) => a ?? l)
+		.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+		.replace(/^#{1,6}\s+/gm, '')
+		.replace(/(\*\*|__|==)(.+?)\1/g, '$2')
+		.replace(/^>\s?/gm, '')
+		.replace(/\n{3,}/g, '\n\n')
+		.trim();
+	return { text, image };
 }

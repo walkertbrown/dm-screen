@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { App, installDomHelpers, Modal, Notice, requestUrl } from './obsidian-shim';
+import { App, installDomHelpers, Modal, Notice, requestUrl, TFile } from './obsidian-shim';
 import DmScreenPlugin, { SERVER } from '../src/main';
 
 beforeAll(() => installDomHelpers());
@@ -19,8 +19,8 @@ async function setup() {
 	await plugin.onload();
 	return { app, plugin };
 }
-const puts = () => requestUrl.sent.filter((r) => r.method === 'PUT');
-const lastTable = () => JSON.parse(puts().at(-1)!.body!);
+const puts = () => requestUrl.sent.filter((r) => r.method === 'PUT' && !r.url.endsWith('/image'));
+const lastTable = () => JSON.parse(puts().at(-1)!.body as string);
 
 describe('sharing the table', () => {
 	it('sends nothing until the GM starts sharing', async () => {
@@ -91,5 +91,61 @@ describe('sharing the table', () => {
 		await plugin.share();
 		expect(plugin.sharing).toBe(false);
 		expect(Notice.last).toContain('Could not open');
+	});
+});
+
+describe('handouts', () => {
+	it('shows selected words, starting to share if it had not, and hides them again', async () => {
+		const { plugin } = await setup();
+		await plugin.showText('', 'Meet me at the mill.\nCome alone.');
+		expect(requestUrl.sent[0]!.url).toBe(`${SERVER}/api/table/open`);
+		expect(lastTable().handout).toEqual({ text: 'Meet me at the mill.\nCome alone.' });
+		expect(Modal.last!.contentEl.querySelector('.dm-screen-handout')!.textContent).toBe('Showing: your textHide');
+		await plugin.hideHandout();
+		expect(lastTable().handout).toBeUndefined();
+		// no picture, so nothing to take down
+		expect(requestUrl.sent.filter((r) => r.method === 'DELETE')).toEqual([]);
+	});
+
+	it('sends a picture on its own, shrunk, then points the table at it; hiding takes it down', async () => {
+		const { app, plugin } = await setup();
+		app.notes.set('maps/Mill map.png', { path: 'maps/Mill map.png', content: '', bytes: new ArrayBuffer(5_000_000) });
+		const shrunk = new ArrayBuffer(200_000);
+		plugin.shrink = async (b) => (b.byteLength === 5_000_000 ? shrunk : null);
+		requestUrl.reply = (r) =>
+			r.url.endsWith('/open') ? { status: 200, json: { room: 'k3m9pqrstu', secret: 'the-secret' } }
+			: r.url.endsWith('/image') ? { status: 200, json: { ok: true, v: 'abc123' } }
+			: { status: 200, json: { ok: true, watching: 1 } };
+		await plugin.showFile(new TFile('maps/Mill map.png') as never);
+		const up = requestUrl.sent.find((r) => r.url.endsWith('/image'))!;
+		expect(up).toMatchObject({ url: `${SERVER}/api/table/k3m9pqrstu/image`, method: 'PUT', contentType: 'image/jpeg', headers: { authorization: 'Bearer the-secret' } });
+		expect(up.body).toBe(shrunk);
+		expect(lastTable().handout).toEqual({ title: 'Mill map', image: 'abc123' });
+		await plugin.hideHandout();
+		expect(lastTable().handout).toBeUndefined();
+		expect(requestUrl.sent.at(-1)).toMatchObject({ url: `${SERVER}/api/table/k3m9pqrstu/image`, method: 'DELETE' });
+	});
+
+	it('shows a note as its words and its first picture', async () => {
+		const { app, plugin } = await setup();
+		app.notes.set('Letter.md', { path: 'Letter.md', content: '---\nsecret: yes\n---\n# A letter\n\n![[seal.png|200]]\nTo [[Aria|the elf]]: **run**.\n%% she wrote it %%\n' });
+		app.notes.set('seal.png', { path: 'seal.png', content: '', bytes: new ArrayBuffer(10) });
+		plugin.shrink = async (b) => b;
+		requestUrl.reply = (r) =>
+			r.url.endsWith('/open') ? { status: 200, json: { room: 'k3m9pqrstu', secret: 'the-secret' } }
+			: r.url.endsWith('/image') ? { status: 200, json: { ok: true, v: 'v1' } }
+			: { status: 200, json: { ok: true, watching: 1 } };
+		await plugin.showFile(new TFile('Letter.md') as never);
+		expect(lastTable().handout).toEqual({ title: 'Letter', image: 'v1', text: 'A letter\n\nTo the elf: run.' });
+	});
+
+	it('says so when a picture cannot be read, and sends nothing for it', async () => {
+		const { plugin } = await setup();
+		await plugin.share();
+		requestUrl.sent.length = 0;
+		plugin.shrink = async () => null;
+		await plugin.showImage(new ArrayBuffer(4), 'Broken');
+		expect(requestUrl.sent).toEqual([]);
+		expect(Notice.last).toBe('Could not read that picture.');
 	});
 });

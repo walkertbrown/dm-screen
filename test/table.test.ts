@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildTable, clocksInNote, hpWords, setClock, type FightEvent, type Show } from '../src/table';
+import { buildTable, clocksInNote, hpWords, noteAsHandout, setClock, type FightEvent, type Show } from '../src/table';
 
 const SHOW: Show = { scene: '', playerHp: true, monsterHp: 'words', rolls: 5 };
 const FIGHT: FightEvent = {
@@ -56,5 +56,18 @@ describe('clocks', () => {
 			{ name: 'Rivals', filled: 1, size: 8 },
 			{ name: 'Us', filled: 3, size: 8 },
 		]);
+	});
+});
+
+describe('a note as a handout', () => {
+	it('keeps the words players should read and finds the first picture', () => {
+		const md = '---\nsecret: the miller did it\n---\n## The letter\n\n![[maps/seal.png|200]]\n![other](https://example.com/x.png)\nTo [[Aria|the elf]] and [[Borin]]: **come alone**, [now](https://x.y).\n%% GM: it is a trap %%\n```clocks\nTrap 1/4\n```\n> signed, W\n';
+		expect(noteAsHandout(md)).toEqual({ text: 'The letter\n\nTo the elf and Borin: come alone, now.\n\nsigned, W', image: 'maps/seal.png' });
+		expect(noteAsHandout('![](<my map.jpg>)').image).toBe('my map.jpg');
+		expect(noteAsHandout('![[notes.md]] plain').image).toBeNull();
+	});
+	it('puts the handout on the table it builds', () => {
+		expect(buildTable(null, [], [], SHOW, { title: 'Seal', image: 'v1' }).handout).toEqual({ title: 'Seal', image: 'v1' });
+		expect(buildTable(null, [], [], SHOW).handout).toBeUndefined();
 	});
 });

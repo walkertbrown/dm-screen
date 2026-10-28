@@ -6,3 +6,12 @@
 .dm-screen-watching { color: var(--text-muted); font-size: var(--font-ui-small); margin-bottom: 8px; }
 .dm-screen-share .setting-item { text-align: start; }
 .dm-screen-note { color: var(--text-muted); font-size: var(--font-ui-small); text-align: start; }
+
+.dm-screen-handout {
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	gap: 8px;
+	margin-top: 6px;
+	color: var(--text-muted);
+}
