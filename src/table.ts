@@ -16,7 +16,9 @@ export interface Fighter { name: string; hp?: string; player?: boolean; down?: b
 export interface Clock { name: string; filled: number; size: number }
 export interface Roll { text: string; at: number }
 export interface Handout { title?: string; text?: string; image?: string }
-export interface Table { scene?: string; round?: number; turn?: number; order: Fighter[]; clocks: Clock[]; rolls: Roll[]; handout?: Handout }
+export interface MapToken { name: string; col: number; row: number; color?: string }
+export interface TableMap { image?: string; cols: number; rows: number; tokens: MapToken[] }
+export interface Table { scene?: string; round?: number; turn?: number; order: Fighter[]; clocks: Clock[]; rolls: Roll[]; handout?: Handout; map?: TableMap }
 
 export type MonsterHp = 'words' | 'numbers' | 'hidden';
 export interface Show { scene: string; playerHp: boolean; monsterHp: MonsterHp; rolls: number }

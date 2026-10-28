@@ -27,3 +27,93 @@
 }
 .dm-screen-trial a { margin-inline-start: 6px; }
 .dm-screen-said { margin-top: 4px; color: var(--text-normal); }
+
+/* the battle map block */
+.dm-screen-map { margin: 8px 0; }
+.dm-screen-map-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 6px; }
+.dm-screen-map-title { font-weight: var(--font-semibold); margin-inline-end: auto; }
+.dm-screen-map-missing { color: var(--text-error); font-size: var(--font-ui-small); }
+.dm-screen-map-stage {
+	position: relative;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	overflow: hidden;
+	user-select: none;
+	container-type: inline-size;
+}
+.dm-screen-map-plain { aspect-ratio: var(--cols) / var(--rows); background: var(--background-secondary); }
+.dm-screen-map-img { display: block; width: 100%; height: auto; margin: 0; pointer-events: none; }
+.dm-screen-map-grid { position: absolute; inset: 0; width: 100%; height: 100%; }
+.dm-screen-map-grid path { stroke: rgba(0, 0, 0, 0.55); stroke-width: 1; fill: none; }
+.dm-screen-map-plain .dm-screen-map-grid path { stroke: var(--text-faint); }
+.dm-screen-map-stage .dm-screen-token {
+	position: absolute;
+	left: calc(100% * var(--col) / var(--cols));
+	top: calc(100% * var(--row) / var(--rows));
+	width: calc(100% / var(--cols));
+	height: calc(100% / var(--rows));
+	padding: 0;
+	background: none;
+	box-shadow: none;
+	border: none;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: grab;
+	touch-action: none;
+	transition: left 0.15s, top 0.15s;
+}
+.dm-screen-token > span:first-child {
+	height: 82%;
+	max-width: 82%;
+	aspect-ratio: 1;
+	border-radius: 50%;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: var(--dm-token, var(--interactive-accent));
+	color: #fff;
+	font-weight: var(--font-bold);
+	font-size: clamp(8px, calc(var(--size, 32px) * 0.36), 16px);
+	border: 2px solid rgba(0, 0, 0, 0.45);
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+	line-height: 1;
+	overflow: hidden;
+}
+.dm-screen-map-stage .dm-screen-token > span:first-child { font-size: clamp(8px, calc(100cqw / var(--cols) * 0.32), 18px); }
+.dm-screen-token.is-hidden > span:first-child { opacity: 0.45; border-style: dashed; }
+.dm-screen-token.is-down > span:first-child { filter: grayscale(1); opacity: 0.6; }
+.dm-screen-token.is-turn > span:first-child { outline: 3px solid var(--text-accent); outline-offset: 2px; }
+.dm-screen-token.is-chosen > span:first-child { outline: 3px dashed var(--text-normal); outline-offset: 2px; }
+.dm-screen-token.is-moving { opacity: 0.3; }
+.dm-screen-token:focus-visible > span:first-child { outline: 3px solid var(--background-modifier-border-focus); outline-offset: 2px; }
+.dm-screen-ghost {
+	position: fixed;
+	z-index: var(--layer-dragged-item, 1000);
+	width: var(--size);
+	height: var(--size);
+	transform: translate(-50%, -50%);
+	pointer-events: none;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	border: none;
+	background: none;
+}
+.dm-screen-ghost .dm-screen-token-name { display: none; }
+.dm-screen-map-bench { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; min-height: 32px; }
+.dm-screen-map-label { color: var(--text-muted); font-size: var(--font-ui-small); }
+.dm-screen-map-bench .dm-screen-token { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px 0 4px; cursor: grab; touch-action: none; }
+.dm-screen-map-bench .dm-screen-token > span:first-child { height: 24px; max-width: none; font-size: 11px; }
+.dm-screen-map-add { width: 100%; margin-top: 6px; }
+.dm-screen-map-hint { color: var(--text-faint); font-size: var(--font-ui-smaller); margin-top: 4px; }
+.dm-screen-red { --dm-token: #c0392b; }
+.dm-screen-orange { --dm-token: #d35400; }
+.dm-screen-yellow { --dm-token: #b7950b; }
+.dm-screen-green { --dm-token: #2e8b57; }
+.dm-screen-cyan { --dm-token: #138d90; }
+.dm-screen-blue { --dm-token: #2e6fd1; }
+.dm-screen-purple { --dm-token: #8e44ad; }
+.dm-screen-pink { --dm-token: #c2185b; }
+@media (prefers-reduced-motion: reduce) { .dm-screen-map-stage .dm-screen-token { transition: none; } }

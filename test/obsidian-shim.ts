@@ -76,6 +76,7 @@ export class App {
 		getAbstractFileByPath: (path: string) => (this.find(path) ? new TFile(this.find(path)!.path) : this.folders.has(path) ? { path } : null),
 		cachedRead: async (f: TFile) => this.find(f.path)!.content,
 		readBinary: async (f: TFile) => this.find(f.path)!.bytes ?? new ArrayBuffer(0),
+		getResourcePath: (f: TFile) => `app://local/${encodeURI(f.path)}`,
 		getMarkdownFiles: () => [...this.notes.values()].map((n) => new TFile(n.path)),
 		create: async (path: string, content: string) => {
 			this.notes.set(path, { path, content });
@@ -104,8 +105,8 @@ export class App {
 }
 
 export class Component {
-	load() {}
-	unload() {}
+	load() { (this as { onload?: () => void }).onload?.(); }
+	unload() { (this as { onunload?: () => void }).onunload?.(); }
 }
 export class MarkdownRenderChild extends Component {
 	constructor(public containerEl: HTMLElement) { super(); }
@@ -126,14 +127,35 @@ export class Plugin extends Component {
 	ribbon: { icon: string; title: string; fn: () => void }[] = [];
 	addRibbonIcon(icon: string, title: string, fn: () => void) { this.ribbon.push({ icon, title, fn }); return document.createElement('div'); }
 	addStatusBarItem() { return document.createElement('div'); }
+	// Dice Tray's panel and Live Preview rolls, for the demo, which runs it beside DM Screen
+	registerView(_type: string, _fn: (leaf: WorkspaceLeaf) => unknown) {}
+	registerEditorExtension(_e: unknown) {}
+	// Tabletop Clocks' running stopwatches
+	registerInterval(id: number) { return id; }
 	async loadData() { return this.data; }
 	async saveData(d: unknown) { this.data = d; }
 }
 
+export class WorkspaceLeaf {
+	view: unknown = null;
+	constructor(public app: App) {}
+}
+export class ItemView {
+	app: App;
+	contentEl = document.createElement('div');
+	constructor(public leaf: WorkspaceLeaf) { this.app = leaf.app; }
+}
+export function getAllTags(cache: { tags?: { tag: string }[] }): string[] {
+	return (cache.tags ?? []).map((t) => t.tag);
+}
+// only read inside Live Preview, which the demo doesn't have
+export const editorLivePreviewField = {};
+export const editorInfoField = {};
+
 export interface SectionInfo { text: string; lineStart: number; lineEnd: number }
 export interface Ctx { sourcePath: string; addChild: (c: Component) => void; getSectionInfo: (el: HTMLElement) => SectionInfo | null }
 export function ctx(sourcePath = 'Game.md', info: SectionInfo | null = null): Ctx {
-	return { sourcePath, addChild: () => {}, getSectionInfo: () => info };
+	return { sourcePath, addChild: (c) => c.load(), getSectionInfo: () => info };
 }
 
 export class Modal {

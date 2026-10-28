@@ -44,6 +44,15 @@ Aria player init 17 hp 31 ac 16
 Borin player init 9 hp 44 ac 18
 2x [[Goblin]]
 [[Bugbear]]
+\`\`\`
+
+\`\`\`battlemap
+![[Mill cellar.png]] 12x8
+Aria C6 blue
+Borin D7 green
+Goblin 1 I3 red
+Goblin 2 J5 red
+Bugbear K2 orange hidden
 \`\`\``;
 
 const LETTER = `---
@@ -99,7 +108,47 @@ async function drawMap(): Promise<ArrayBuffer> {
 	return blob.arrayBuffer();
 }
 
-type Ctx = { sourcePath: string; addChild: () => void; getSectionInfo: () => { text: string; lineStart: number; lineEnd: number } };
+/** The battle map's picture: the mill's cellar from above, 12 squares by 8. */
+async function drawCellar(): Promise<ArrayBuffer> {
+	const c = document.createElement('canvas');
+	c.width = 1200;
+	c.height = 800;
+	const g = c.getContext('2d')!;
+	g.fillStyle = '#3b3530';
+	g.fillRect(0, 0, 1200, 800);
+	// flagstones
+	const stone = ['#8a8178', '#7f776e', '#948b81', '#857c73'];
+	for (let y = 0; y < 800; y += 100) {
+		for (let x = 0; x < 1200; x += 100) {
+			g.fillStyle = stone[(x / 100 * 7 + y / 100 * 3) % 4]!;
+			g.fillRect(x + 4, y + 4, 92, 92);
+		}
+	}
+	// walls, with a gap in the middle one
+	g.fillStyle = '#2a2420';
+	for (const [x, y, w, h] of [[0, 0, 1200, 50], [0, 750, 1200, 50], [0, 0, 50, 800], [1150, 0, 50, 800], [550, 50, 50, 300], [550, 500, 50, 250]] as const) g.fillRect(x, y, w, h);
+	// the wheel's shaft and the sacks
+	g.fillStyle = '#5b4632';
+	g.beginPath();
+	g.arc(900, 600, 90, 0, Math.PI * 2);
+	g.fill();
+	g.strokeStyle = '#2a2420';
+	g.lineWidth = 12;
+	g.stroke();
+	g.fillStyle = '#c9b48a';
+	for (const [x, y] of [[120, 130], [180, 120], [140, 190], [1030, 130], [1080, 180]] as const) {
+		g.beginPath();
+		g.ellipse(x, y, 34, 26, 0.4, 0, Math.PI * 2);
+		g.fill();
+	}
+	// the stair up
+	g.fillStyle = '#6b5a48';
+	for (let i = 0; i < 5; i++) g.fillRect(60, 560 + i * 36, 150, 30);
+	const blob = await new Promise<Blob>((done) => c.toBlob((b) => done(b!), 'image/png'));
+	return blob.arrayBuffer();
+}
+
+type Ctx = { sourcePath: string; addChild: (c: { load(): void }) => void; getSectionInfo: () => { text: string; lineStart: number; lineEnd: number } };
 type Proc = (src: string, el: HTMLElement, c: Ctx) => void;
 
 // the shim's requestUrl answers tests; here it goes to the real relay, which is this same site
@@ -117,6 +166,10 @@ async function main() {
 	app.active = 'Mill.md';
 	app.notes.set('Pinned to the mill door.md', { path: 'Pinned to the mill door.md', content: LETTER });
 	app.notes.set('Mill map.png', { path: 'Mill map.png', content: '', bytes: await drawMap() });
+	const cellar = await drawCellar();
+	app.notes.set('Mill cellar.png', { path: 'Mill cellar.png', content: '', bytes: cellar });
+	const cellarUrl = URL.createObjectURL(new Blob([cellar], { type: 'image/png' }));
+	app.vault.getResourcePath = () => cellarUrl;
 
 	const screen = new DmScreenPlugin(app as never, { id: 'dm-screen' } as never);
 	await screen.onload();
@@ -130,11 +183,13 @@ async function main() {
 	const clockProc = (clocks as never as { codeBlocks: Record<string, Proc> }).codeBlocks.clocks!;
 	const diceProcs = (dice as never as { postProcessors: ((e: HTMLElement, c: Ctx) => void)[] }).postProcessors;
 	const qiProc = (qi as never as { codeBlocks: Record<string, Proc> }).codeBlocks.initiative!;
+	const mapProc = (screen as never as { codeBlocks: Record<string, Proc> }).codeBlocks.battlemap!;
 
 	const note = () => app.notes.get('Mill.md')!.content;
 	const ctx = (lang: string): Ctx => ({
 		sourcePath: 'Mill.md',
-		addChild: () => {},
+		// the map board is a child that has to load, as Obsidian loads it; the other plugins' blocks need nothing here
+		addChild: (c) => (lang === 'battlemap' ? c.load() : undefined),
 		getSectionInfo: () => {
 			const lines = note().split('\n');
 			const lineStart = lines.findIndex((l) => l.startsWith('```' + lang));
@@ -150,14 +205,27 @@ async function main() {
 	const rolls = document.querySelector<HTMLElement>('#rolls')!;
 	const tracker = document.querySelector<HTMLElement>('#tracker')!;
 	const drawClocks = () => clockProc(blockBody('clocks'), board, ctx('clocks'));
+	const mapEl = document.querySelector<HTMLElement>('#battlemap')!;
+	// Obsidian draws a block again from scratch when its text changes, and the old board unloads first
+	let mapBoard: { unload(): void } | null = null;
+	const drawMapBlock = () => {
+		mapBoard?.unload();
+		const holder = document.createElement('div');
+		mapEl.replaceChildren(holder);
+		const c = ctx('battlemap');
+		mapProc(blockBody('battlemap'), holder, { ...c, addChild: (b) => ((mapBoard = b as never), c.addChild(b)) });
+	};
+	const block = (lang: string, text: string) => new RegExp('```' + lang + '[\\s\\S]*?```').exec(text)?.[0];
 	const process = app.vault.process;
 	app.vault.process = async (f, fn) => {
 		const before = note();
 		const out = await process(f, fn);
-		if (/```clocks[\s\S]*?```/.exec(before)?.[0] !== /```clocks[\s\S]*?```/.exec(out)?.[0]) drawClocks();
+		if (block('clocks', before) !== block('clocks', out)) drawClocks();
+		if (block('battlemap', before) !== block('battlemap', out)) drawMapBlock();
 		return out;
 	};
 	drawClocks();
+	drawMapBlock();
 	for (const pp of diceProcs) pp(rolls, { sourcePath: 'Mill.md', addChild: () => {}, getSectionInfo: () => null } as never);
 	qiProc(blockBody('initiative'), tracker, ctx('initiative'));
 

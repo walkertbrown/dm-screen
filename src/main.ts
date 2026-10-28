@@ -1,5 +1,7 @@
-import { App, Editor, EventRef, Menu, Modal, Notice, Plugin, PluginSettingTab, Setting, SettingDefinitionItem, TAbstractFile, TFile, requestUrl } from 'obsidian';
+import { App, Editor, EventRef, MarkdownPostProcessorContext, Menu, Modal, Notice, Plugin, PluginSettingTab, Setting, SettingDefinitionItem, TAbstractFile, TFile, requestUrl } from 'obsidian';
 import qrcode from 'qrcode-generator';
+import { MapBoard } from './board';
+import { mapForPlayers, type BattleMap } from './map';
 import { buildTable, clocksInNote, IMAGE_EXTENSIONS, noteAsHandout, setClock, type Clock, type ClockEvent, type FightEvent, type Handout, type MonsterHp, type Roll, type RollEvent, type Table } from './table';
 
 // The relay the players' phones read from. Nothing is sent there until the GM starts sharing (see the README).
@@ -24,6 +26,12 @@ export interface Trial { ends: number; buy?: string; why?: string }
 // the room keeps one picture of at most 1MB (the site's src/table/room.ts)
 const IMAGE_BYTES = 1024 * 1024;
 
+// the map being shown: the note its block is in, and the picture as it was sent (v, from the room)
+export interface ShownMap { sourcePath: string; image: string | null; v?: string; map: BattleMap }
+
+const MAP_TEMPLATE = '```battlemap\ngrid 12x8\nAria B2 blue\nBorin C3 green\nGoblin 1 J6 red\nGoblin 2 K5 red hidden\n```\n';
+const OPEN = /^((?:\s*>)*\s*)(`{3,}|~{3,})\s*(\S+)/;
+
 const DEFAULT_SETTINGS: Settings = { scene: '', playerHp: true, monsterHp: 'words', rolls: 5, room: '', secret: '', key: '', trial: null };
 
 export default class DmScreenPlugin extends Plugin {
@@ -32,6 +40,8 @@ export default class DmScreenPlugin extends Plugin {
 	clocks: Clock[] = [];
 	rolls: Roll[] = [];
 	handout: Handout | null = null;
+	shownMap: ShownMap | null = null;
+	boards = new Set<MapBoard>();
 	watching = 0;
 	shrink: (bytes: ArrayBuffer) => Promise<ArrayBuffer | null> = shrink;
 	now: () => number = Date.now;
@@ -81,6 +91,27 @@ export default class DmScreenPlugin extends Plugin {
 			},
 		});
 		this.addCommand({
+			id: 'insert-map',
+			name: 'Insert a battle map',
+			editorCallback: (editor: Editor) => editor.replaceSelection(MAP_TEMPLATE),
+		});
+		this.addCommand({
+			id: 'hide-map',
+			name: 'Hide the map from players',
+			checkCallback: (checking) => {
+				if (!this.shownMap) return false;
+				if (!checking) void this.hideMap();
+				return true;
+			},
+		});
+		this.registerMarkdownCodeBlockProcessor('battlemap', (src, el, ctx) => {
+			const board = new MapBoard(this, el, ctx, src);
+			ctx.addChild(board);
+			board.draw();
+			// the shown map's block was redrawn because its note changed: the players get the new places
+			if (this.shownMap?.sourcePath === ctx.sourcePath) void this.updateMap(board);
+		});
+		this.addCommand({
 			id: 'hide-handout',
 			name: 'Hide the handout from players',
 			checkCallback: (checking) => {
@@ -100,6 +131,8 @@ export default class DmScreenPlugin extends Plugin {
 		this.registerEvent(on.on<FightEvent>('quick-initiative:change', (e) => {
 			this.fight = e;
 			this.changed();
+			// whose turn it is shows on the boards too
+			for (const b of this.boards) b.draw();
 		}));
 		this.registerEvent(on.on<ClockEvent>('tabletop-clocks:change', (e) => {
 			this.clocks = setClock(this.clocks, e);
@@ -117,7 +150,9 @@ export default class DmScreenPlugin extends Plugin {
 
 	table(): Table {
 		const s = this.settings;
-		return buildTable(this.fight, this.clocks, this.rolls, { scene: s.scene, playerHp: s.playerHp, monsterHp: s.monsterHp, rolls: s.rolls }, this.handout);
+		const t = buildTable(this.fight, this.clocks, this.rolls, { scene: s.scene, playerHp: s.playerHp, monsterHp: s.monsterHp, rolls: s.rolls }, this.handout);
+		if (this.shownMap) t.map = mapForPlayers(this.shownMap.map, this.shownMap.v);
+		return t;
 	}
 
 	/** Opens a room if there isn't one, sends what's on the table, and shows the link to give the players. */
@@ -153,8 +188,10 @@ export default class DmScreenPlugin extends Plugin {
 		this.settings.trial = null;
 		this.watching = 0;
 		this.handout = null;
+		this.shownMap = null;
 		await this.saveSettings();
 		this.showStatus();
+		for (const b of this.boards) b.draw();
 		if (room) await requestUrl({ url: `${SERVER}/api/table/${room}`, method: 'DELETE', headers: { authorization: `Bearer ${secret}` }, throw: false }).catch(() => null);
 		new Notice('Stopped sharing. The players\' page now says the table has closed.');
 	}
@@ -214,6 +251,82 @@ export default class DmScreenPlugin extends Plugin {
 		if (room && was?.image) await requestUrl({ url: `${SERVER}/api/table/${room}/image`, method: 'DELETE', headers: { authorization: `Bearer ${secret}` }, throw: false }).catch(() => null);
 	}
 
+	/** A battle map: its picture goes once, made small for phones, in a slot of its own; then its tokens with each move. */
+	async showMap(sourcePath: string, map: BattleMap, picture: TFile | null) {
+		if (!(await this.ready())) return;
+		const { room, secret } = this.settings;
+		const had = this.shownMap?.v;
+		let v: string | undefined;
+		if (picture) {
+			const small = await this.shrink(await this.app.vault.readBinary(picture)).catch(() => null);
+			if (!small) {
+				new Notice('Could not read the map\'s picture.');
+				return;
+			}
+			const r = await requestUrl({ url: `${SERVER}/api/table/${room}/map`, method: 'PUT', headers: { authorization: `Bearer ${secret}` }, contentType: 'image/jpeg', body: small, throw: false }).catch(() => null);
+			v = r?.status === 200 ? (r.json as { v?: string }).v : undefined;
+			if (!v) {
+				new Notice('Could not send the map. Check the connection and try again.');
+				return;
+			}
+		}
+		this.shownMap = { sourcePath, image: map.image, map };
+		if (v) this.shownMap.v = v;
+		await this.send();
+		if (had && !v) await this.dropMap();
+		for (const b of this.boards) b.draw();
+		new Notice('The players can see the map now.');
+	}
+
+	/** The shown map's block changed: new places go out, and a new picture if the block names another. */
+	async updateMap(board: MapBoard) {
+		const shown = this.shownMap;
+		if (!shown || shown.sourcePath !== board.sourcePath) return;
+		if (board.map.image !== shown.image) return this.showMap(board.sourcePath, board.map, board.picture());
+		shown.map = board.map;
+		this.changed();
+	}
+
+	async hideMap() {
+		const was = this.shownMap;
+		this.shownMap = null;
+		for (const b of this.boards) b.draw();
+		await this.send();
+		if (was?.v) await this.dropMap();
+	}
+
+	private async dropMap() {
+		const { room, secret } = this.settings;
+		if (room) await requestUrl({ url: `${SERVER}/api/table/${room}/map`, method: 'DELETE', headers: { authorization: `Bearer ${secret}` }, throw: false }).catch(() => null);
+	}
+
+	/** Rewrites the body of one rendered block (a battle map's, when a token moves). False when the block can't be found. */
+	async edit(el: HTMLElement, ctx: MarkdownPostProcessorContext, lang: string, edit: (body: string) => string): Promise<boolean> {
+		const info = ctx.getSectionInfo(el);
+		const file = this.app.vault.getAbstractFileByPath(ctx.sourcePath);
+		if (!info || !(file instanceof TFile)) return false;
+		let ok = false;
+		await this.app.vault.process(file, (data) => {
+			const lines = data.split('\n');
+			const open = OPEN.exec(lines[info.lineStart] ?? '');
+			const close = lines[info.lineEnd] ?? '';
+			if (!open || open[3] !== lang || !close.includes(open[2]!)) return data; // the note changed under us; leave it alone
+			const prefix = open[1]!;
+			const body = lines
+				.slice(info.lineStart + 1, info.lineEnd)
+				.map((l) => l.slice(prefix.length))
+				.join('\n');
+			const next = edit(body)
+				.split('\n')
+				.filter((l, i, a) => l.trim() || i < a.length - 1)
+				.map((l) => prefix + l);
+			lines.splice(info.lineStart + 1, info.lineEnd - info.lineStart - 1, ...next);
+			ok = true;
+			return lines.join('\n');
+		});
+		return ok;
+	}
+
 	/** Showing something starts sharing if it hadn't started. */
 	private async ready() {
 		if (!this.sharing) await this.share();
@@ -249,6 +362,8 @@ export default class DmScreenPlugin extends Plugin {
 			this.settings.secret = '';
 			this.settings.trial = null;
 			this.handout = null;
+			this.shownMap = null;
+			for (const b of this.boards) b.draw();
 			await this.saveSettings();
 			new Notice(trial && this.now() >= trial.ends
 				? 'The free hour is over and the shared table has closed. A key in DM Screen\'s settings keeps a table open all evening.'
@@ -340,8 +455,19 @@ export class ShareModal extends Modal {
 			const hide = showing.createEl('button', { text: 'Hide' });
 			hide.onclick = () => void p.hideHandout();
 		};
+		const mapLine = el.createDiv({ cls: 'dm-screen-handout' });
+		const showMap = () => {
+			mapLine.empty();
+			mapLine.toggleClass('dm-screen-hidden', !p.shownMap);
+			if (!p.shownMap) return;
+			mapLine.createSpan({ text: `Map: ${p.shownMap.image ? p.shownMap.image.split('/').pop()!.replace(/\.[^.]+$/, '') : 'a grid'}` });
+			const hide = mapLine.createEl('button', { text: 'Hide' });
+			hide.onclick = () => void p.hideMap();
+		};
 		show();
-		this.off = p.whenSent(show);
+		showMap();
+		const offs = [p.whenSent(show), p.whenSent(showMap)];
+		this.off = () => offs.forEach((f) => f());
 		new Setting(el)
 			.setName('Scene')
 			.setDesc('A line at the top of the players\' page.')
@@ -354,7 +480,7 @@ export class ShareModal extends Modal {
 			);
 		el.createEl('p', {
 			cls: 'dm-screen-note',
-			text: 'Players open the link or scan the code; nothing to install. They see the turn order, clocks, recent rolls and any handout you show them, and nothing else from your vault. Hit points follow your settings.',
+			text: 'Players open the link or scan the code; nothing to install. They see the turn order, clocks, recent rolls and any handout or map you show them, and nothing else from your vault. Hit points follow your settings.',
 		});
 	}
 
