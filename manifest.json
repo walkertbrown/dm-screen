@@ -3,7 +3,7 @@
 	"name": "DM Screen",
 	"version": "0.3.0",
 	"minAppVersion": "1.13.0",
-	"description": "Put the table on your players' phones: turn order, battle map, clocks and rolls, live from your notes. They open a link or scan a code, nothing to install.",
+	"description": "A GM screen for TTRPGs that puts the table on your players' phones: turn order, battle map, clocks and rolls, live from your notes. Players open a link or scan a code, nothing to install.",
 	"author": "Bananafest Destiny",
 	"isDesktopOnly": false
 }
